@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import os
 import psycopg
 import secrets
@@ -7,6 +8,7 @@ import secrets
 app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL ist nicht gesetzt")
@@ -134,7 +136,7 @@ def eingabe(obstacle):
     error = None
 
     token = request.args.get("token", "").strip()
-    now = datetime.utcnow()
+    now = datetime.now(BERLIN_TZ).replace(tzinfo=None)
 
     with get_conn() as conn:
         with conn.cursor() as c:
