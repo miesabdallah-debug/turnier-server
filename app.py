@@ -21,12 +21,18 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     obstacle INTEGER NOT NULL,
                     start_number INTEGER NOT NULL,
-                    time DOUBLE PRECISION NOT NULL,
-                    faults INTEGER NOT NULL,
+                    time DOUBLE PRECISION,
+                    faults INTEGER,
                     note TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'OK',
                     created_at TIMESTAMP NOT NULL,
                     processed INTEGER DEFAULT 0
                 )
+            """)
+
+            c.execute("""
+                ALTER TABLE results
+                ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'OK'
             """)
         conn.commit()
 
@@ -39,7 +45,7 @@ HTML_FORM = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 body { font-family: sans-serif; padding: 20px; }
-input, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
+input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
 .error { color: #b00020; margin-top: 10px; }
 .success { color: green; margin-top: 10px; }
 </style>
@@ -48,8 +54,15 @@ input, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box
 <h2>Hindernis {{obstacle}}</h2>
 <form method="post">
     <input name="start_number" placeholder="Startnummer" required>
-    <input name="time" placeholder="Zeit (z.B. 41.83 oder 41,83)" required>
-    <input name="faults" placeholder="Fehler" required>
+    <input name="time" placeholder="Zeit (z.B. 41.83 oder 41,83)">
+    <input name="faults" placeholder="Fehler">
+    
+    <select name="status" required>
+        <option value="OK">Normal</option>
+        <option value="RET">RET - aufgegeben</option>
+        <option value="ELI">ELI - ausgeschieden</option>
+    </select>
+
     <input name="note" placeholder="Bemerkung">
     <button type="submit">Senden</button>
 </form>
@@ -73,30 +86,45 @@ def eingabe(obstacle):
     if request.method == "POST":
         try:
             start_number = int(request.form["start_number"].strip())
-            time_value = float(request.form["time"].strip().replace(",", "."))
-            faults = int(request.form["faults"].strip())
+            status = request.form["status"].strip().upper()
             note = request.form.get("note", "").strip()
+
+            time_raw = request.form.get("time", "").strip()
+            faults_raw = request.form.get("faults", "").strip()
+
+            if status not in ["OK", "RET", "ELI"]:
+                raise ValueError("Ungültiger Status")
+
+            if status == "OK":
+                if not time_raw:
+                    raise ValueError("Bei normalem Ergebnis muss eine Zeit eingegeben werden.")
+                if not faults_raw:
+                    raise ValueError("Bei normalem Ergebnis müssen Fehler eingegeben werden.")
+
+            time_value = float(time_raw.replace(",", ".")) if time_raw else None
+            faults = int(faults_raw) if faults_raw else None
 
             with get_conn() as conn:
                 with conn.cursor() as c:
                     c.execute("""
                         INSERT INTO results
-                        (obstacle, start_number, time, faults, note, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        (obstacle, start_number, time, faults, note, status, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         obstacle,
                         start_number,
                         time_value,
                         faults,
                         note,
+                        status,
                         datetime.utcnow()
                     ))
                 conn.commit()
 
             success = True
 
-        except ValueError:
-            error = "Bitte gültige Zahlen eingeben."
+        except ValueError as e:
+            error = str(e) if str(e) else "Bitte gültige Werte eingeben."
         except Exception as e:
             error = f"Serverfehler: {e}"
 
@@ -112,7 +140,7 @@ def get_results():
     with get_conn() as conn:
         with conn.cursor() as c:
             c.execute("""
-                SELECT id, obstacle, start_number, time, faults, note, created_at, processed
+                SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
                 FROM results
                 WHERE processed = 0
                 ORDER BY id ASC
@@ -127,8 +155,9 @@ def get_results():
             "time": row[3],
             "faults": row[4],
             "note": row[5],
-            "created_at": row[6].isoformat() if row[6] else None,
-            "processed": row[7],
+            "status": row[6],
+            "created_at": row[7].isoformat() if row[7] else None,
+            "processed": row[8],
         }
         for row in rows
     ]
@@ -156,7 +185,9 @@ def uebersicht():
     with get_conn() as conn:
         with conn.cursor() as c:
             c.execute("""
-                SELECT id, obstacle, start_number, time, faults, note, created_at, processed
+                SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
+                FROM results
+                ORDER BY id DESC
                 FROM results
                 ORDER BY id DESC
             """)
@@ -188,6 +219,7 @@ def uebersicht():
                 <th>Zeit</th>
                 <th>Fehler</th>
                 <th>Bemerkung</th>
+                <th>Status</th>
                 <th>Erstellt</th>
                 <th>Verarbeitet</th>
             </tr>
@@ -201,6 +233,7 @@ def uebersicht():
                 <td>{{ row[5] }}</td>
                 <td>{{ row[6] }}</td>
                 <td>{{ row[7] }}</td>
+                <td>{{ row[8] }}</td>
             </tr>
             {% endfor %}
         </table>
