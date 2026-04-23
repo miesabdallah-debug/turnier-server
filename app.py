@@ -42,7 +42,7 @@ def init_db():
 
             c.execute("""
                 UPDATE results
-                SET gespann_number = start_number
+                SET gespann_number = gespann_number
                 WHERE gespann_number IS NULL
             """)
 
@@ -244,6 +244,9 @@ def uebersicht():
     </head>
     <body>
         <h2>Eingegangene Ergebnisse</h2>
+        <p>
+            <a href="/alle_loeschen" style="color: red; font-weight: bold;">Alle Einträge löschen</a>
+        </p>
         <table>
             <tr>
                 <th>ID</th>
@@ -255,7 +258,8 @@ def uebersicht():
                 <th>Status</th>
                 <th>Erstellt</th>
                 <th>Verarbeitet</th>
-                <th>Aktion</th>
+                <th>Bearbeiten</th>
+                <th>Löschen</th>
             </tr>
             {% for row in rows %}
             <tr>
@@ -269,6 +273,7 @@ def uebersicht():
                 <td>{{ row[7] }}</td>
                 <td>{{ row[8] }}</td>
                 <td><a href="/bearbeiten/{{ row[0] }}">Bearbeiten</a></td>
+                <td><a href="/loeschen/{{ row[0] }}" style="color: red;">Löschen</a></td>
             </tr>
             {% endfor %}
         </table>
@@ -316,7 +321,7 @@ def bearbeiten(result_id):
                             processed = 0
                         WHERE id = %s
                     """, (
-                        start_number,
+                        gespann_number,
                         time_value,
                         faults,
                         note,
@@ -400,6 +405,93 @@ def bearbeiten(result_id):
     """
 
     return render_template_string(html, row=row, success=success, error=error)
+
+
+@app.route("/loeschen/<int:result_id>", methods=["GET", "POST"])
+def loeschen(result_id):
+    error = None
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id, obstacle, gespann_number, time, faults, note, status, created_at, processed
+                FROM results
+                WHERE id = %s
+            """, (result_id,))
+            row = c.fetchone()
+
+            if not row:
+                return "Eintrag nicht gefunden", 404
+
+            if request.method == "POST":
+                confirm = request.form.get("confirm")
+
+                if confirm != "yes":
+                    error = "Bitte bestätige das Löschen mit dem Haken."
+                else:
+                    c.execute("DELETE FROM results WHERE id = %s", (result_id,))
+                    conn.commit()
+                    return """
+                    <!doctype html>
+                    <html>
+                    <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1">
+                        <title>Gelöscht</title>
+                    </head>
+                    <body style="font-family: sans-serif; padding: 20px;">
+                        <h2>Eintrag gelöscht</h2>
+                        <p>Der Eintrag wurde erfolgreich gelöscht.</p>
+                        <a href="/uebersicht">Zurück zur Übersicht</a>
+                    </body>
+                    </html>
+                    """
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Eintrag löschen</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; }
+            .error { color: #b00020; margin-top: 10px; }
+            button { font-size: 18px; padding: 10px 15px; margin-top: 10px; }
+            label { display: block; margin-top: 15px; }
+        </style>
+    </head>
+    <body>
+        <h2>Eintrag löschen</h2>
+
+        <div class="box">
+            <p><strong>ID:</strong> {{ row[0] }}</p>
+            <p><strong>Hindernis:</strong> {{ row[1] }}</p>
+            <p><strong>Gespann:</strong> {{ row[2] }}</p>
+            <p><strong>Zeit:</strong> {{ row[3] }}</p>
+            <p><strong>Fehler:</strong> {{ row[4] }}</p>
+            <p><strong>Status:</strong> {{ row[6] }}</p>
+        </div>
+
+        <form method="post">
+            <label>
+                <input type="checkbox" name="confirm" value="yes">
+                Ja, ich möchte diesen Eintrag wirklich löschen
+            </label>
+
+            <button type="submit">Eintrag endgültig löschen</button>
+        </form>
+
+        {% if error %}
+        <p class="error">❌ {{ error }}</p>
+        {% endif %}
+
+        <p><a href="/uebersicht">Abbrechen und zurück</a></p>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, row=row, error=error)
+
 
 if __name__ == "__main__":
     app.run(debug=True)
