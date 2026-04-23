@@ -42,13 +42,18 @@ def init_db():
 
             c.execute("""
                 UPDATE results
-                SET gespann_number = gespann_number
+                SET gespann_number = start_number
                 WHERE gespann_number IS NULL
             """)
 
             c.execute("""
                 ALTER TABLE results
                 ALTER COLUMN gespann_number SET NOT NULL
+            """)
+
+            c.execute("""
+                ALTER TABLE results
+                DROP COLUMN IF EXISTS start_number
             """)
 
             c.execute("""
