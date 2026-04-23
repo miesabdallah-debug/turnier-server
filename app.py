@@ -188,8 +188,6 @@ def uebersicht():
                 SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
                 FROM results
                 ORDER BY id DESC
-                FROM results
-                ORDER BY id DESC
             """)
             rows = c.fetchall()
 
