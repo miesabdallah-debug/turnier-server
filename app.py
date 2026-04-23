@@ -29,7 +29,16 @@ def get_conn():
     return psycopg.connect(DATABASE_URL)
 
 def make_qr_base64(data: str) -> str:
-    img = qrcode.make(data)
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=4,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
     buffer = BytesIO()
     img.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
@@ -825,14 +834,16 @@ def token_set_erstellen():
             body { font-family: sans-serif; padding: 20px; max-width: 1200px; margin: auto; }
             input, button { font-size: 18px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
             .error { color: #b00020; margin-top: 10px; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 30px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 30px; }
             .card {
                 border: 2px solid #ccc;
                 border-radius: 10px;
-                padding: 15px;
+                padding: 20px;
                 page-break-inside: avoid;
                 break-inside: avoid;
                 text-align: center;
+                overflow: hidden;
+                background: white;
             }
             .card h3 { margin-top: 0; }
             .qr { margin: 10px 0; }
@@ -845,7 +856,14 @@ def token_set_erstellen():
                 form, .no-print { display: none; }
                 body { padding: 0; }
                 .grid { gap: 10px; }
-                .card { border: 1px solid #000; }
+                .card {
+                    border: 1px solid #000;
+                    padding: 12px;
+                }
+                .qr img {
+                    width: 200px !important;
+                    height: 200px !important;
+                }
             }
         </style>
     </head>
@@ -879,7 +897,11 @@ def token_set_erstellen():
                 {% endif %}
                 <h3>Hindernis {{ item.obstacle }}</h3>
                 <div class="qr">
-                    <img src="data:image/png;base64,{{ item.qr_base64 }}" alt="QR-Code für Hindernis {{ item.obstacle }}">
+                    <img
+                        src="data:image/png;base64,{{ item.qr_base64 }}"
+                        alt="QR-Code für Hindernis {{ item.obstacle }}"
+                        style="width: 220px; height: 220px; object-fit: contain; display: block; margin: 0 auto;"
+                    >
                 </div>
                 <div><strong>Token:</strong> {{ item.token }}</div>
                 <div class="link">{{ item.link }}</div>
