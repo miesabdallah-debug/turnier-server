@@ -40,11 +40,6 @@ def init_db():
                 ADD COLUMN IF NOT EXISTS gespann_number INTEGER
             """)
 
-            c.execute("""
-                UPDATE results
-                SET gespann_number = start_number
-                WHERE gespann_number IS NULL
-            """)
 
             c.execute("""
                 ALTER TABLE results
@@ -61,10 +56,6 @@ def init_db():
                 ALTER COLUMN faults DROP NOT NULL
             """)
 
-            c.execute("""
-                ALTER TABLE results
-                DROP COLUMN IF EXISTS start_number
-            """)
 
             c.execute("""
                 DO $$
