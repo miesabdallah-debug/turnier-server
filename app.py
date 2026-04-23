@@ -53,6 +53,16 @@ def init_db():
 
             c.execute("""
                 ALTER TABLE results
+                ALTER COLUMN time DROP NOT NULL
+            """)
+
+            c.execute("""
+                ALTER TABLE results
+                ALTER COLUMN faults DROP NOT NULL
+            """)
+
+            c.execute("""
+                ALTER TABLE results
                 DROP COLUMN IF EXISTS start_number
             """)
 
