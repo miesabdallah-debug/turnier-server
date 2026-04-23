@@ -151,18 +151,42 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
 </head>
 <body>
 <h2>Hindernis {{obstacle}}</h2>
-<form method="post">
-    <input name="gespann_number" placeholder="Gespannnummer" required>
-    <input name="time" placeholder="Zeit (z.B. 41.83 oder 41,83)">
-    <input name="faults" placeholder="Fehler">
+
+<form method="post" id="resultForm">
+    <input
+        id="gespann_number"
+        name="gespann_number"
+        placeholder="Gespannnummer"
+        required
+        value="{{ form_data.get('gespann_number', '') }}"
+    >
+
+    <input
+        id="time"
+        name="time"
+        placeholder="Zeit (z.B. 41.83 oder 41,83)"
+        value="{{ form_data.get('time', '') }}"
+    >
+
+    <input
+        id="faults"
+        name="faults"
+        placeholder="Fehler"
+        value="{{ form_data.get('faults', '') }}"
+    >
     
-    <select name="status" required>
-        <option value="OK">Normal</option>
-        <option value="RET">RET - aufgegeben</option>
-        <option value="ELI">ELI - ausgeschieden</option>
+    <select id="status" name="status" required>
+        <option value="OK" {% if form_data.get('status', 'OK') == 'OK' %}selected{% endif %}>Normal</option>
+        <option value="RET" {% if form_data.get('status') == 'RET' %}selected{% endif %}>RET - aufgegeben</option>
+        <option value="ELI" {% if form_data.get('status') == 'ELI' %}selected{% endif %}>ELI - ausgeschieden</option>
     </select>
 
-    <input name="note" placeholder="Bemerkung">
+    <input
+        name="note"
+        placeholder="Bemerkung"
+        value="{{ form_data.get('note', '') }}"
+    >
+
     <button type="submit">Senden</button>
 </form>
 
@@ -173,6 +197,32 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
 {% if error %}
 <p class="error">❌ {{ error }}</p>
 {% endif %}
+
+<script>
+function updateFieldRules() {
+    const status = document.getElementById("status").value;
+    const timeField = document.getElementById("time");
+    const faultsField = document.getElementById("faults");
+
+    if (status === "OK") {
+        timeField.required = true;
+        faultsField.required = true;
+        timeField.disabled = false;
+        faultsField.disabled = false;
+    } else {
+        timeField.required = false;
+        faultsField.required = false;
+        timeField.disabled = true;
+        faultsField.disabled = true;
+        timeField.value = "";
+        faultsField.value = "";
+    }
+}
+
+document.getElementById("status").addEventListener("change", updateFieldRules);
+window.addEventListener("load", updateFieldRules);
+</script>
+
 </body>
 </html>
 """
@@ -181,6 +231,13 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
 def eingabe(obstacle):
     success = False
     error = None
+    form_data = {
+        "gespann_number": "",
+        "time": "",
+        "faults": "",
+        "status": "OK",
+        "note": "",
+    }
 
     token = request.args.get("token", "").strip()
     now = datetime.now(BERLIN_TZ).replace(tzinfo=None)
@@ -214,13 +271,21 @@ def eingabe(obstacle):
         """, 403
 
     if request.method == "POST":
-        try:
-            gespann_number = int(request.form["gespann_number"].strip())
-            status = request.form["status"].strip().upper()
-            note = request.form.get("note", "").strip()
+        form_data = {
+            "gespann_number": request.form.get("gespann_number", "").strip(),
+            "time": request.form.get("time", "").strip(),
+            "faults": request.form.get("faults", "").strip(),
+            "status": request.form.get("status", "OK").strip().upper(),
+            "note": request.form.get("note", "").strip(),
+        }
 
-            time_raw = request.form.get("time", "").strip()
-            faults_raw = request.form.get("faults", "").strip()
+        try:
+            gespann_number = int(form_data["gespann_number"])
+            status = form_data["status"]
+            note = form_data["note"]
+
+            time_raw = form_data["time"]
+            faults_raw = form_data["faults"]
 
             if status not in ["OK", "RET", "ELI"]:
                 raise ValueError("Ungültiger Status")
@@ -252,6 +317,13 @@ def eingabe(obstacle):
                 conn.commit()
 
             success = True
+            form_data = {
+                "gespann_number": "",
+                "time": "",
+                "faults": "",
+                "status": "OK",
+                "note": "",
+            }
 
         except ValueError as e:
             error = str(e) if str(e) else "Bitte gültige Werte eingeben."
@@ -265,7 +337,8 @@ def eingabe(obstacle):
         HTML_FORM,
         obstacle=obstacle,
         success=success,
-        error=error
+        error=error,
+        form_data=form_data
     )
 
 @app.route("/api/results")
