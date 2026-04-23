@@ -4,6 +4,9 @@ from zoneinfo import ZoneInfo
 import os
 import psycopg
 import secrets
+import qrcode
+import base64
+from io import BytesIO
 
 app = Flask(__name__)
 
@@ -15,6 +18,13 @@ if not DATABASE_URL:
 
 def get_conn():
     return psycopg.connect(DATABASE_URL)
+
+def make_qr_base64(data: str) -> str:
+    img = qrcode.make(data)
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return encoded
 
 def init_db():
     with get_conn() as conn:
@@ -616,17 +626,20 @@ def alle_loeschen():
 
     return render_template_string(html, count=count, error=error)
 
-@app.route("/token_erstellen", methods=["GET", "POST"])
-def token_erstellen():
+@app.route("/token_set_erstellen", methods=["GET", "POST"])
+def token_set_erstellen():
     error = None
-    result_link = None
-    result_token = None
+    results = []
 
     if request.method == "POST":
         try:
-            obstacle = int(request.form["obstacle"].strip())
+            obstacle_count = int(request.form["obstacle_count"].strip())
             valid_from_raw = request.form["valid_from"].strip()
             valid_until_raw = request.form["valid_until"].strip()
+            tournament_name = request.form.get("tournament_name", "").strip()
+
+            if obstacle_count < 1:
+                raise ValueError("Die Anzahl der Hindernisse muss mindestens 1 sein.")
 
             valid_from = datetime.strptime(valid_from_raw, "%Y-%m-%dT%H:%M")
             valid_until = datetime.strptime(valid_until_raw, "%Y-%m-%dT%H:%M")
@@ -634,27 +647,36 @@ def token_erstellen():
             if valid_until <= valid_from:
                 raise ValueError("Das Ende muss nach dem Beginn liegen.")
 
-            token = secrets.token_urlsafe(16)
-
             with get_conn() as conn:
                 with conn.cursor() as c:
-                    c.execute("""
-                        INSERT INTO access_tokens
-                        (obstacle, token, valid_from, valid_until, is_active, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (
-                        obstacle,
-                        token,
-                        valid_from,
-                        valid_until,
-                        True,
-                        datetime.utcnow()
-                    ))
-                conn.commit()
+                    for obstacle in range(1, obstacle_count + 1):
+                        token = secrets.token_urlsafe(16)
 
-            base_url = request.host_url.rstrip("/")
-            result_link = f"{base_url}/eingabe/{obstacle}?token={token}"
-            result_token = token
+                        c.execute("""
+                            INSERT INTO access_tokens
+                            (obstacle, token, valid_from, valid_until, is_active, created_at)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """, (
+                            obstacle,
+                            token,
+                            valid_from,
+                            valid_until,
+                            True,
+                            datetime.now(BERLIN_TZ).replace(tzinfo=None)
+                        ))
+
+                        base_url = request.host_url.rstrip("/")
+                        link = f"{base_url}/eingabe/{obstacle}?token={token}"
+                        qr_base64 = make_qr_base64(link)
+
+                        results.append({
+                            "obstacle": obstacle,
+                            "token": token,
+                            "link": link,
+                            "qr_base64": qr_base64,
+                        })
+
+                conn.commit()
 
         except ValueError as e:
             error = str(e) if str(e) else "Bitte gültige Werte eingeben."
@@ -666,36 +688,71 @@ def token_erstellen():
     <html>
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Token erstellen</title>
+        <title>QR-Codes für Hindernisse</title>
         <style>
-            body { font-family: sans-serif; padding: 20px; max-width: 700px; margin: auto; }
+            body { font-family: sans-serif; padding: 20px; max-width: 1200px; margin: auto; }
             input, button { font-size: 18px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
             .error { color: #b00020; margin-top: 10px; }
-            .success { color: green; margin-top: 10px; word-break: break-all; }
-            .box { border: 1px solid #ccc; padding: 15px; margin-top: 20px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 30px; }
+            .card {
+                border: 2px solid #ccc;
+                border-radius: 10px;
+                padding: 15px;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                text-align: center;
+            }
+            .card h3 { margin-top: 0; }
+            .qr { margin: 10px 0; }
+            .link {
+                font-size: 12px;
+                word-break: break-all;
+                color: #444;
+            }
+            @media print {
+                form, .no-print { display: none; }
+                body { padding: 0; }
+                .grid { gap: 10px; }
+                .card { border: 1px solid #000; }
+            }
         </style>
     </head>
     <body>
-        <h2>Token für Hindernis erstellen</h2>
+        <h2>QR-Codes für Hindernisse erzeugen</h2>
 
         <form method="post">
-            <input name="obstacle" placeholder="Hindernisnummer" required>
+            <input name="tournament_name" placeholder="Turniername (optional)">
+            <input name="obstacle_count" placeholder="Anzahl Hindernisse" required>
             <label>Gültig von:</label>
             <input type="datetime-local" name="valid_from" required>
             <label>Gültig bis:</label>
             <input type="datetime-local" name="valid_until" required>
-            <button type="submit">Token erzeugen</button>
+            <button type="submit">QR-Codes erzeugen</button>
         </form>
 
         {% if error %}
         <p class="error">❌ {{ error }}</p>
         {% endif %}
 
-        {% if result_link %}
-        <div class="box">
-            <p><strong>Token:</strong> {{ result_token }}</p>
-            <p><strong>QR-Link:</strong></p>
-            <p class="success">{{ result_link }}</p>
+        {% if results %}
+        <p class="no-print">
+            Fertig. Du kannst diese Seite jetzt direkt drucken.
+        </p>
+
+        <div class="grid">
+            {% for item in results %}
+            <div class="card">
+                {% if tournament_name %}
+                <div><strong>{{ tournament_name }}</strong></div>
+                {% endif %}
+                <h3>Hindernis {{ item.obstacle }}</h3>
+                <div class="qr">
+                    <img src="data:image/png;base64,{{ item.qr_base64 }}" alt="QR-Code für Hindernis {{ item.obstacle }}">
+                </div>
+                <div><strong>Token:</strong> {{ item.token }}</div>
+                <div class="link">{{ item.link }}</div>
+            </div>
+            {% endfor %}
         </div>
         {% endif %}
     </body>
@@ -705,8 +762,8 @@ def token_erstellen():
     return render_template_string(
         html,
         error=error,
-        result_link=result_link,
-        result_token=result_token
+        results=results,
+        tournament_name=request.form.get("tournament_name", "").strip() if request.method == "POST" else ""
     )
 
 
