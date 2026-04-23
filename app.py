@@ -1,28 +1,34 @@
 from flask import Flask, request, jsonify, render_template_string
-import sqlite3
 from datetime import datetime
+import os
+import psycopg
 
 app = Flask(__name__)
 
-DB = "results.db"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL ist nicht gesetzt")
+
+def get_conn():
+    return psycopg.connect(DATABASE_URL)
 
 def init_db():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            obstacle INTEGER,
-            start_number INTEGER,
-            time REAL,
-            faults INTEGER,
-            note TEXT,
-            created_at TEXT,
-            processed INTEGER DEFAULT 0
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS results (
+                    id SERIAL PRIMARY KEY,
+                    obstacle INTEGER NOT NULL,
+                    start_number INTEGER NOT NULL,
+                    time DOUBLE PRECISION NOT NULL,
+                    faults INTEGER NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TIMESTAMP NOT NULL,
+                    processed INTEGER DEFAULT 0
+                )
+            """)
+        conn.commit()
 
 init_db()
 
@@ -33,20 +39,27 @@ HTML_FORM = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 body { font-family: sans-serif; padding: 20px; }
-input, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; }
+input, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
+.error { color: #b00020; margin-top: 10px; }
+.success { color: green; margin-top: 10px; }
 </style>
 </head>
 <body>
 <h2>Hindernis {{obstacle}}</h2>
 <form method="post">
     <input name="start_number" placeholder="Startnummer" required>
-    <input name="time" placeholder="Zeit (z.B. 41.83)" required>
+    <input name="time" placeholder="Zeit (z.B. 41.83 oder 41,83)" required>
     <input name="faults" placeholder="Fehler" required>
     <input name="note" placeholder="Bemerkung">
     <button type="submit">Senden</button>
 </form>
+
 {% if success %}
-<p>✅ Gespeichert!</p>
+<p class="success">✅ Gespeichert!</p>
+{% endif %}
+
+{% if error %}
+<p class="error">❌ {{ error }}</p>
 {% endif %}
 </body>
 </html>
@@ -55,61 +68,99 @@ input, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; }
 @app.route("/eingabe/<int:obstacle>", methods=["GET", "POST"])
 def eingabe(obstacle):
     success = False
+    error = None
+
     if request.method == "POST":
-        conn = sqlite3.connect(DB)
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO results 
-            (obstacle, start_number, time, faults, note, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            obstacle,
-            int(request.form["start_number"]),
-            float(request.form["time"]),
-            int(request.form["faults"]),
-            request.form.get("note", ""),
-            datetime.now().isoformat()
-        ))
-        conn.commit()
-        conn.close()
-        success = True
+        try:
+            start_number = int(request.form["start_number"].strip())
+            time_value = float(request.form["time"].strip().replace(",", "."))
+            faults = int(request.form["faults"].strip())
+            note = request.form.get("note", "").strip()
 
-    return render_template_string(HTML_FORM, obstacle=obstacle, success=success)
+            with get_conn() as conn:
+                with conn.cursor() as c:
+                    c.execute("""
+                        INSERT INTO results
+                        (obstacle, start_number, time, faults, note, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        obstacle,
+                        start_number,
+                        time_value,
+                        faults,
+                        note,
+                        datetime.utcnow()
+                    ))
+                conn.commit()
 
+            success = True
+
+        except ValueError:
+            error = "Bitte gültige Zahlen eingeben."
+        except Exception as e:
+            error = f"Serverfehler: {e}"
+
+    return render_template_string(
+        HTML_FORM,
+        obstacle=obstacle,
+        success=success,
+        error=error
+    )
 
 @app.route("/api/results")
 def get_results():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT * FROM results WHERE processed = 0")
-    rows = c.fetchall()
-    conn.close()
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id, obstacle, start_number, time, faults, note, created_at, processed
+                FROM results
+                WHERE processed = 0
+                ORDER BY id ASC
+            """)
+            rows = c.fetchall()
 
-    return jsonify(rows)
-
+    data = [
+        {
+            "id": row[0],
+            "obstacle": row[1],
+            "start_number": row[2],
+            "time": row[3],
+            "faults": row[4],
+            "note": row[5],
+            "created_at": row[6].isoformat() if row[6] else None,
+            "processed": row[7],
+        }
+        for row in rows
+    ]
+    return jsonify(data)
 
 @app.route("/api/mark_processed", methods=["POST"])
 def mark_processed():
     ids = request.json.get("ids", [])
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.executemany("UPDATE results SET processed=1 WHERE id=?", [(i,) for i in ids])
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
 
+    if not ids:
+        return {"status": "ok", "updated": 0}
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute(
+                "UPDATE results SET processed = 1 WHERE id = ANY(%s)",
+                (ids,)
+            )
+        conn.commit()
+
+    return {"status": "ok", "updated": len(ids)}
 
 @app.route("/uebersicht")
 def uebersicht():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, obstacle, start_number, time, faults, note, created_at, processed
-        FROM results
-        ORDER BY id DESC
-    """)
-    rows = c.fetchall()
-    conn.close()
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id, obstacle, start_number, time, faults, note, created_at, processed
+                FROM results
+                ORDER BY id DESC
+            """)
+            rows = c.fetchall()
 
     html = """
     <!doctype html>
@@ -117,10 +168,7 @@ def uebersicht():
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Übersicht</title>
-
-        <!-- Auto-Refresh alle 3 Sekunden -->
         <meta http-equiv="refresh" content="3">
-
         <style>
             body { font-family: sans-serif; padding: 20px; }
             h2 { margin-bottom: 20px; }
@@ -162,6 +210,5 @@ def uebersicht():
 
     return render_template_string(html, rows=rows)
 
-
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)
