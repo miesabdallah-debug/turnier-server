@@ -11,6 +11,11 @@ from io import BytesIO
 app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+MASTER_PASSWORD = os.environ.get("MASTER_PASSWORD")
+
+if not MASTER_PASSWORD:
+    raise RuntimeError("MASTER_PASSWORD ist nicht gesetzt")
+
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 if not DATABASE_URL:
@@ -25,6 +30,26 @@ def make_qr_base64(data: str) -> str:
     img.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
     return encoded
+
+def require_master_password():
+    password = request.args.get("pw", "").strip()
+
+    if password != MASTER_PASSWORD:
+        return """
+        <!doctype html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Zugriff geschützt</title>
+        </head>
+        <body style="font-family: sans-serif; padding: 20px;">
+            <h2>🔒 Zugriff geschützt</h2>
+            <p>Diese Seite ist mit einem Masterpasswort geschützt.</p>
+        </body>
+        </html>
+        """, 403
+
+    return None
 
 def init_db():
     with get_conn() as conn:
@@ -278,6 +303,10 @@ def mark_processed():
 
 @app.route("/uebersicht")
 def uebersicht():
+    pw = request.args.get("pw", "").strip()
+    auth = require_master_password()
+    if auth:
+        return auth
     with get_conn() as conn:
         with conn.cursor() as c:
             c.execute("""
@@ -306,7 +335,7 @@ def uebersicht():
     <body>
         <h2>Eingegangene Ergebnisse</h2>
         <p>
-            <a href="/alle_loeschen" style="color: red; font-weight: bold;">Alle Einträge löschen</a>
+            <a href="/alle_loeschen?pw={{ pw }}" style="color: red; font-weight: bold;">Alle Einträge löschen</a>
         </p>
         <table>
             <tr>
@@ -333,8 +362,8 @@ def uebersicht():
                 <td>{{ row[6] }}</td>
                 <td>{{ row[7] }}</td>
                 <td>{{ row[8] }}</td>
-                <td><a href="/bearbeiten/{{ row[0] }}">Bearbeiten</a></td>
-                <td><a href="/loeschen/{{ row[0] }}" style="color: red;">Löschen</a></td>
+                <td><a href="/bearbeiten/{{ row[0] }}?pw={{ pw }}">Bearbeiten</a></td>
+                <td><a href="/loeschen/{{ row[0] }}?pw={{ pw }}" style="color: red;">Löschen</a></td>
             </tr>
             {% endfor %}
         </table>
@@ -342,10 +371,13 @@ def uebersicht():
     </html>
     """
 
-    return render_template_string(html, rows=rows)
+    return render_template_string(html, rows=rows, pw=pw)
 
 @app.route("/bearbeiten/<int:result_id>", methods=["GET", "POST"])
 def bearbeiten(result_id):
+    auth = require_master_password()
+    if auth:
+        return auth
     error = None
     success = False
 
@@ -470,6 +502,9 @@ def bearbeiten(result_id):
 
 @app.route("/loeschen/<int:result_id>", methods=["GET", "POST"])
 def loeschen(result_id):
+    auth = require_master_password()
+    if auth:
+        return auth
     error = None
 
     with get_conn() as conn:
@@ -556,6 +591,9 @@ def loeschen(result_id):
 
 @app.route("/alle_loeschen", methods=["GET", "POST"])
 def alle_loeschen():
+    auth = require_master_password()
+    if auth:
+        return auth
     error = None
 
     with get_conn() as conn:
@@ -628,6 +666,9 @@ def alle_loeschen():
 
 @app.route("/token_set_erstellen", methods=["GET", "POST"])
 def token_set_erstellen():
+    auth = require_master_password()
+    if auth:
+        return auth
     error = None
     results = []
 
