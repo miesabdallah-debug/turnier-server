@@ -56,6 +56,17 @@ def init_db():
                 ALTER COLUMN faults DROP NOT NULL
             """)
 
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS access_tokens (
+                    id SERIAL PRIMARY KEY,
+                    obstacle INTEGER NOT NULL,
+                    token TEXT NOT NULL UNIQUE,
+                    valid_from TIMESTAMP NOT NULL,
+                    valid_until TIMESTAMP NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMP NOT NULL
+                )
+            """)
 
             c.execute("""
                 DO $$
@@ -120,6 +131,37 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
 def eingabe(obstacle):
     success = False
     error = None
+
+    token = request.args.get("token", "").strip()
+    now = datetime.utcnow()
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id
+                FROM access_tokens
+                WHERE obstacle = %s
+                  AND token = %s
+                  AND is_active = TRUE
+                  AND valid_from <= %s
+                  AND valid_until >= %s
+            """, (obstacle, token, now, now))
+            token_row = c.fetchone()
+
+    if not token_row:
+        return """
+        <!doctype html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Zugriff nicht erlaubt</title>
+        </head>
+        <body style="font-family: sans-serif; padding: 20px;">
+            <h2>❌ Zugriff nicht erlaubt</h2>
+            <p>Dieser Link ist ungültig oder abgelaufen.</p>
+        </body>
+        </html>
+        """, 403
 
     if request.method == "POST":
         try:
@@ -570,6 +612,99 @@ def alle_loeschen():
     """
 
     return render_template_string(html, count=count, error=error)
+
+@app.route("/token_erstellen", methods=["GET", "POST"])
+def token_erstellen():
+    error = None
+    result_link = None
+    result_token = None
+
+    if request.method == "POST":
+        try:
+            obstacle = int(request.form["obstacle"].strip())
+            valid_from_raw = request.form["valid_from"].strip()
+            valid_until_raw = request.form["valid_until"].strip()
+
+            valid_from = datetime.strptime(valid_from_raw, "%Y-%m-%dT%H:%M")
+            valid_until = datetime.strptime(valid_until_raw, "%Y-%m-%dT%H:%M")
+
+            if valid_until <= valid_from:
+                raise ValueError("Das Ende muss nach dem Beginn liegen.")
+
+            token = secrets.token_urlsafe(16)
+
+            with get_conn() as conn:
+                with conn.cursor() as c:
+                    c.execute("""
+                        INSERT INTO access_tokens
+                        (obstacle, token, valid_from, valid_until, is_active, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        obstacle,
+                        token,
+                        valid_from,
+                        valid_until,
+                        True,
+                        datetime.utcnow()
+                    ))
+                conn.commit()
+
+            base_url = request.host_url.rstrip("/")
+            result_link = f"{base_url}/eingabe/{obstacle}?token={token}"
+            result_token = token
+
+        except ValueError as e:
+            error = str(e) if str(e) else "Bitte gültige Werte eingeben."
+        except Exception as e:
+            error = f"Serverfehler: {e}"
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Token erstellen</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; max-width: 700px; margin: auto; }
+            input, button { font-size: 18px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
+            .error { color: #b00020; margin-top: 10px; }
+            .success { color: green; margin-top: 10px; word-break: break-all; }
+            .box { border: 1px solid #ccc; padding: 15px; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <h2>Token für Hindernis erstellen</h2>
+
+        <form method="post">
+            <input name="obstacle" placeholder="Hindernisnummer" required>
+            <label>Gültig von:</label>
+            <input type="datetime-local" name="valid_from" required>
+            <label>Gültig bis:</label>
+            <input type="datetime-local" name="valid_until" required>
+            <button type="submit">Token erzeugen</button>
+        </form>
+
+        {% if error %}
+        <p class="error">❌ {{ error }}</p>
+        {% endif %}
+
+        {% if result_link %}
+        <div class="box">
+            <p><strong>Token:</strong> {{ result_token }}</p>
+            <p><strong>QR-Link:</strong></p>
+            <p class="success">{{ result_link }}</p>
+        </div>
+        {% endif %}
+    </body>
+    </html>
+    """
+
+    return render_template_string(
+        html,
+        error=error,
+        result_link=result_link,
+        result_token=result_token
+    )
 
 
 if __name__ == "__main__":
