@@ -220,6 +220,7 @@ def uebersicht():
                 <th>Status</th>
                 <th>Erstellt</th>
                 <th>Verarbeitet</th>
+                <th>Aktion</th>
             </tr>
             {% for row in rows %}
             <tr>
@@ -232,6 +233,7 @@ def uebersicht():
                 <td>{{ row[6] }}</td>
                 <td>{{ row[7] }}</td>
                 <td>{{ row[8] }}</td>
+                <td><a href="/bearbeiten/{{ row[0] }}">Bearbeiten</a></td>
             </tr>
             {% endfor %}
         </table>
@@ -240,6 +242,126 @@ def uebersicht():
     """
 
     return render_template_string(html, rows=rows)
+
+@app.route("/bearbeiten/<int:result_id>", methods=["GET", "POST"])
+def bearbeiten(result_id):
+    error = None
+    success = False
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            if request.method == "POST":
+                try:
+                    start_number = int(request.form["start_number"].strip())
+                    status = request.form["status"].strip().upper()
+                    note = request.form.get("note", "").strip()
+
+                    time_raw = request.form.get("time", "").strip()
+                    faults_raw = request.form.get("faults", "").strip()
+
+                    if status not in ["OK", "RET", "ELI"]:
+                        raise ValueError("Ungültiger Status")
+
+                    if status == "OK":
+                        if not time_raw:
+                            raise ValueError("Bei normalem Ergebnis muss eine Zeit eingegeben werden.")
+                        if not faults_raw:
+                            raise ValueError("Bei normalem Ergebnis müssen Fehler eingegeben werden.")
+
+                    time_value = float(time_raw.replace(",", ".")) if time_raw else None
+                    faults = int(faults_raw) if faults_raw else None
+
+                    c.execute("""
+                        UPDATE results
+                        SET start_number = %s,
+                            time = %s,
+                            faults = %s,
+                            note = %s,
+                            status = %s,
+                            processed = 0
+                        WHERE id = %s
+                    """, (
+                        start_number,
+                        time_value,
+                        faults,
+                        note,
+                        status,
+                        result_id
+                    ))
+                    conn.commit()
+                    success = True
+
+                except ValueError as e:
+                    error = str(e) if str(e) else "Bitte gültige Werte eingeben."
+                except Exception as e:
+                    error = f"Serverfehler: {e}"
+
+            c.execute("""
+                SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
+                FROM results
+                WHERE id = %s
+            """, (result_id,))
+            row = c.fetchone()
+
+    if not row:
+        return "Eintrag nicht gefunden", 404
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Eintrag bearbeiten</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
+            .error { color: #b00020; margin-top: 10px; }
+            .success { color: green; margin-top: 10px; }
+            a { display: inline-block; margin-top: 15px; }
+        </style>
+    </head>
+    <body>
+        <h2>Eintrag bearbeiten</h2>
+        <p><strong>ID:</strong> {{ row[0] }}</p>
+        <p><strong>Hindernis:</strong> {{ row[1] }}</p>
+        <p><strong>Erstellt:</strong> {{ row[7] }}</p>
+
+        <form method="post">
+            <input name="start_number" value="{{ row[2] }}" placeholder="Startnummer" required>
+
+            <input name="time"
+                   value="{{ '' if row[3] is none else row[3] }}"
+                   placeholder="Zeit (z.B. 41.83 oder 41,83)">
+
+            <input name="faults"
+                   value="{{ '' if row[4] is none else row[4] }}"
+                   placeholder="Fehler">
+
+            <select name="status" required>
+                <option value="OK" {% if row[6] == 'OK' %}selected{% endif %}>Normal</option>
+                <option value="RET" {% if row[6] == 'RET' %}selected{% endif %}>RET - aufgegeben</option>
+                <option value="ELI" {% if row[6] == 'ELI' %}selected{% endif %}>ELI - ausgeschieden</option>
+            </select>
+
+            <input name="note" value="{{ row[5] }}" placeholder="Bemerkung">
+
+            <button type="submit">Änderungen speichern</button>
+        </form>
+
+        {% if success %}
+        <p class="success">✅ Änderungen gespeichert</p>
+        {% endif %}
+
+        {% if error %}
+        <p class="error">❌ {{ error }}</p>
+        {% endif %}
+
+        <a href="/uebersicht">Zurück zur Übersicht</a>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, row=row, success=success, error=error)
 
 if __name__ == "__main__":
     app.run(debug=True)
