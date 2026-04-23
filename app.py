@@ -921,5 +921,82 @@ def token_set_erstellen():
     )
 
 
+@app.route("/tokens_anzeigen")
+def tokens_anzeigen():
+    pw = request.args.get("pw", "").strip()
+
+    if pw != MASTER_PASSWORD:
+        return "❌ Kein Zugriff", 403
+
+    now = datetime.now(BERLIN_TZ).replace(tzinfo=None)
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT obstacle, token, valid_from, valid_until, is_active
+                FROM access_tokens
+                ORDER BY obstacle
+            """)
+            rows = c.fetchall()
+
+    return render_template_string("""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Aktive Tokens</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+            th { background: #f2f2f2; }
+            tr:nth-child(even) { background: #fafafa; }
+            .inactive { color: #999; }
+            .active { font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <h2>Token Übersicht</h2>
+
+        <table>
+            <tr>
+                <th>Hindernis</th>
+                <th>Token</th>
+                <th>Gültig von</th>
+                <th>Gültig bis</th>
+                <th>Status</th>
+                <th>Link</th>
+            </tr>
+
+            {% for r in rows %}
+            {% set is_valid = r[4] and r[2] <= now <= r[3] %}
+            <tr class="{{ 'active' if is_valid else 'inactive' }}">
+                <td>{{ r[0] }}</td>
+                <td>{{ r[1] }}</td>
+                <td>{{ r[2] }}</td>
+                <td>{{ r[3] }}</td>
+                <td>
+                    {% if not r[4] %}
+                        deaktiviert
+                    {% elif now < r[2] %}
+                        noch nicht aktiv
+                    {% elif now > r[3] %}
+                        abgelaufen
+                    {% else %}
+                        ✅ aktiv
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="/eingabe/{{ r[0] }}?token={{ r[1] }}" target="_blank">
+                        öffnen
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+
+    </body>
+    </html>
+    """, rows=rows, now=now)
+
 if __name__ == "__main__":
     app.run(debug=True)
