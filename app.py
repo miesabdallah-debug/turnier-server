@@ -12,6 +12,10 @@ app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 MASTER_PASSWORD = os.environ.get("MASTER_PASSWORD")
+API_PASSWORD = os.environ.get("API_PASSWORD")
+
+if not API_PASSWORD:
+    raise RuntimeError("API_PASSWORD ist nicht gesetzt")
 
 if not MASTER_PASSWORD:
     raise RuntimeError("MASTER_PASSWORD ist nicht gesetzt")
@@ -30,6 +34,14 @@ def make_qr_base64(data: str) -> str:
     img.save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
     return encoded
+
+def require_api_password():
+    password = request.args.get("api_pw", "").strip()
+
+    if password != API_PASSWORD:
+        return {"error": "unauthorized"}, 403
+
+    return None
 
 def require_master_password():
     password = request.args.get("pw", "").strip()
@@ -258,6 +270,9 @@ def eingabe(obstacle):
 
 @app.route("/api/results")
 def get_results():
+    auth = require_api_password()
+    if auth:
+        return auth
     with get_conn() as conn:
         with conn.cursor() as c:
             c.execute("""
@@ -286,6 +301,9 @@ def get_results():
 
 @app.route("/api/mark_processed", methods=["POST"])
 def mark_processed():
+    auth = require_api_password()
+    if auth:
+        return auth
     ids = request.json.get("ids", [])
 
     if not ids:
