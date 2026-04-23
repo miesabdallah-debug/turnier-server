@@ -499,5 +499,78 @@ def loeschen(result_id):
     return render_template_string(html, row=row, error=error)
 
 
+@app.route("/alle_loeschen", methods=["GET", "POST"])
+def alle_loeschen():
+    error = None
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT COUNT(*) FROM results")
+            count = c.fetchone()[0]
+
+            if request.method == "POST":
+                confirm = request.form.get("confirm")
+
+                if confirm != "yes":
+                    error = "Bitte bestätige das Löschen aller Einträge mit dem Haken."
+                else:
+                    c.execute("DELETE FROM results")
+                    conn.commit()
+                    return """
+                    <!doctype html>
+                    <html>
+                    <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1">
+                        <title>Alle gelöscht</title>
+                    </head>
+                    <body style="font-family: sans-serif; padding: 20px;">
+                        <h2>Alle Einträge gelöscht</h2>
+                        <p>Alle Datensätze wurden erfolgreich gelöscht.</p>
+                        <a href="/uebersicht">Zurück zur Übersicht</a>
+                    </body>
+                    </html>
+                    """
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Alle Einträge löschen</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            .warning { color: red; font-weight: bold; }
+            .error { color: #b00020; margin-top: 10px; }
+            button { font-size: 18px; padding: 10px 15px; margin-top: 10px; }
+            label { display: block; margin-top: 15px; }
+        </style>
+    </head>
+    <body>
+        <h2>Alle Einträge löschen</h2>
+
+        <p class="warning">Achtung: Du bist dabei, alle Einträge zu löschen.</p>
+        <p>Aktuell gespeicherte Einträge: <strong>{{ count }}</strong></p>
+
+        <form method="post">
+            <label>
+                <input type="checkbox" name="confirm" value="yes">
+                Ja, ich möchte wirklich alle Einträge löschen
+            </label>
+
+            <button type="submit">Alle Einträge endgültig löschen</button>
+        </form>
+
+        {% if error %}
+        <p class="error">❌ {{ error }}</p>
+        {% endif %}
+
+        <p><a href="/uebersicht">Abbrechen und zurück</a></p>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, count=count, error=error)
+
+
 if __name__ == "__main__":
     app.run(debug=True)
