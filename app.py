@@ -20,7 +20,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS results (
                     id SERIAL PRIMARY KEY,
                     obstacle INTEGER NOT NULL,
-                    start_number INTEGER NOT NULL,
+                    gespann_number INTEGER NOT NULL,
                     time DOUBLE PRECISION,
                     faults INTEGER,
                     note TEXT DEFAULT '',
@@ -33,6 +33,38 @@ def init_db():
             c.execute("""
                 ALTER TABLE results
                 ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'OK'
+            """)
+
+            c.execute("""
+                ALTER TABLE results
+                ADD COLUMN IF NOT EXISTS gespann_number INTEGER
+            """)
+
+            c.execute("""
+                UPDATE results
+                SET gespann_number = start_number
+                WHERE gespann_number IS NULL
+            """)
+
+            c.execute("""
+                ALTER TABLE results
+                ALTER COLUMN gespann_number SET NOT NULL
+            """)
+
+            c.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'unique_obstacle_gespann'
+                    ) THEN
+                        ALTER TABLE results
+                        ADD CONSTRAINT unique_obstacle_gespann
+                        UNIQUE (obstacle, gespann_number);
+                    END IF;
+                END
+                $$;
             """)
         conn.commit()
 
@@ -53,7 +85,7 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
 <body>
 <h2>Hindernis {{obstacle}}</h2>
 <form method="post">
-    <input name="start_number" placeholder="Startnummer" required>
+    <input name="gespann_number" placeholder="Gespannnummer" required>
     <input name="time" placeholder="Zeit (z.B. 41.83 oder 41,83)">
     <input name="faults" placeholder="Fehler">
     
@@ -85,7 +117,7 @@ def eingabe(obstacle):
 
     if request.method == "POST":
         try:
-            start_number = int(request.form["start_number"].strip())
+            gespann_number = int(request.form["gespann_number"].strip())
             status = request.form["status"].strip().upper()
             note = request.form.get("note", "").strip()
 
@@ -108,11 +140,11 @@ def eingabe(obstacle):
                 with conn.cursor() as c:
                     c.execute("""
                         INSERT INTO results
-                        (obstacle, start_number, time, faults, note, status, created_at)
+                        (obstacle, gespann_number, time, faults, note, status, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
                         obstacle,
-                        start_number,
+                        gespann_number,
                         time_value,
                         faults,
                         note,
@@ -126,7 +158,10 @@ def eingabe(obstacle):
         except ValueError as e:
             error = str(e) if str(e) else "Bitte gültige Werte eingeben."
         except Exception as e:
-            error = f"Serverfehler: {e}"
+            if "unique_obstacle_gespann" in str(e):
+                error = "Für dieses Hindernis wurde diese Gespannnummer schon eingetragen."
+            else:
+                error = f"Serverfehler: {e}"
 
     return render_template_string(
         HTML_FORM,
@@ -140,7 +175,7 @@ def get_results():
     with get_conn() as conn:
         with conn.cursor() as c:
             c.execute("""
-                SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
+                SELECT id, obstacle, gespann_number, time, faults, note, status, created_at, processed
                 FROM results
                 WHERE processed = 0
                 ORDER BY id ASC
@@ -151,7 +186,7 @@ def get_results():
         {
             "id": row[0],
             "obstacle": row[1],
-            "start_number": row[2],
+            "gespann_number": row[2],
             "time": row[3],
             "faults": row[4],
             "note": row[5],
@@ -185,7 +220,7 @@ def uebersicht():
     with get_conn() as conn:
         with conn.cursor() as c:
             c.execute("""
-                SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
+                SELECT id, obstacle, gespann_number, time, faults, note, status, created_at, processed
                 FROM results
                 ORDER BY id DESC
             """)
@@ -213,7 +248,7 @@ def uebersicht():
             <tr>
                 <th>ID</th>
                 <th>Hindernis</th>
-                <th>Startnummer</th>
+                <th>Gespannnummer</th>
                 <th>Zeit</th>
                 <th>Fehler</th>
                 <th>Bemerkung</th>
@@ -252,7 +287,7 @@ def bearbeiten(result_id):
         with conn.cursor() as c:
             if request.method == "POST":
                 try:
-                    start_number = int(request.form["start_number"].strip())
+                    gespann_number = int(request.form["gespann_number"].strip())
                     status = request.form["status"].strip().upper()
                     note = request.form.get("note", "").strip()
 
@@ -273,7 +308,7 @@ def bearbeiten(result_id):
 
                     c.execute("""
                         UPDATE results
-                        SET start_number = %s,
+                        SET gespann_number = %s,
                             time = %s,
                             faults = %s,
                             note = %s,
@@ -294,10 +329,13 @@ def bearbeiten(result_id):
                 except ValueError as e:
                     error = str(e) if str(e) else "Bitte gültige Werte eingeben."
                 except Exception as e:
-                    error = f"Serverfehler: {e}"
+                    if "unique_obstacle_gespann" in str(e):
+                        error = "Für dieses Hindernis gibt es diese Gespannnummer bereits."
+                    else:
+                        error = f"Serverfehler: {e}"
 
             c.execute("""
-                SELECT id, obstacle, start_number, time, faults, note, status, created_at, processed
+                SELECT id, obstacle, gespann_number, time, faults, note, status, created_at, processed
                 FROM results
                 WHERE id = %s
             """, (result_id,))
@@ -327,7 +365,7 @@ def bearbeiten(result_id):
         <p><strong>Erstellt:</strong> {{ row[7] }}</p>
 
         <form method="post">
-            <input name="start_number" value="{{ row[2] }}" placeholder="Startnummer" required>
+            <input name="gespann_number" value="{{ row[2] }}" placeholder="Gespannnummer" required>
 
             <input name="time"
                    value="{{ '' if row[3] is none else row[3] }}"
