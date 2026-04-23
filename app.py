@@ -117,6 +117,10 @@ def uebersicht():
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Übersicht</title>
+
+        <!-- Auto-Refresh alle 3 Sekunden -->
+        <meta http-equiv="refresh" content="3">
+
         <style>
             body { font-family: sans-serif; padding: 20px; }
             h2 { margin-bottom: 20px; }
