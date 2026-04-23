@@ -99,5 +99,65 @@ def mark_processed():
     return {"status": "ok"}
 
 
+@app.route("/uebersicht")
+def uebersicht():
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, obstacle, start_number, time, faults, note, created_at, processed
+        FROM results
+        ORDER BY id DESC
+    """)
+    rows = c.fetchall()
+    conn.close()
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Übersicht</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            h2 { margin-bottom: 20px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+            th { background: #f2f2f2; }
+            tr:nth-child(even) { background: #fafafa; }
+        </style>
+    </head>
+    <body>
+        <h2>Eingegangene Ergebnisse</h2>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Hindernis</th>
+                <th>Startnummer</th>
+                <th>Zeit</th>
+                <th>Fehler</th>
+                <th>Bemerkung</th>
+                <th>Erstellt</th>
+                <th>Verarbeitet</th>
+            </tr>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row[0] }}</td>
+                <td>{{ row[1] }}</td>
+                <td>{{ row[2] }}</td>
+                <td>{{ row[3] }}</td>
+                <td>{{ row[4] }}</td>
+                <td>{{ row[5] }}</td>
+                <td>{{ row[6] }}</td>
+                <td>{{ row[7] }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, rows=rows)
+
+
 if __name__ == "__main__":
     app.run()
