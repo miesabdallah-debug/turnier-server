@@ -167,6 +167,10 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
         name="gespann_number"
         placeholder="Gespannnummer"
         required
+        type="text"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        autocomplete="off"
         value="{{ form_data.get('gespann_number', '') }}"
     >
 
@@ -174,6 +178,9 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
         id="time"
         name="time"
         placeholder="Zeit (z.B. 41.83 oder 41,83)"
+        type="text"
+        inputmode="decimal"
+        autocomplete="off"
         value="{{ form_data.get('time', '') }}"
     >
 
@@ -181,6 +188,10 @@ input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 1
         id="faults"
         name="faults"
         placeholder="Fehler"
+        type="text"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        autocomplete="off"
         value="{{ form_data.get('faults', '') }}"
     >
     
