@@ -142,6 +142,45 @@ def init_db():
                 END
                 $$;
             """)
+
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS cones_results (
+                    id SERIAL PRIMARY KEY,
+                    gespann_number INTEGER NOT NULL,
+                    time DOUBLE PRECISION,
+                    faults INTEGER,
+                    note TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'OK',
+                    created_at TIMESTAMP NOT NULL,
+                    processed INTEGER DEFAULT 0
+                )
+            """)
+
+            c.execute("""
+                ALTER TABLE cones_results
+                ALTER COLUMN time DROP NOT NULL
+            """)
+
+            c.execute("""
+                ALTER TABLE cones_results
+                ALTER COLUMN faults DROP NOT NULL
+            """)
+
+            c.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'unique_cones_gespann'
+                    ) THEN
+                        ALTER TABLE cones_results
+                        ADD CONSTRAINT unique_cones_gespann
+                        UNIQUE (gespann_number);
+                    END IF;
+                END
+                $$;
+            """)
         conn.commit()
 
 init_db()
@@ -1008,6 +1047,576 @@ def tokens_anzeigen():
     </body>
     </html>
     """, rows=rows, now=now)
+
+
+HTML_KEGEL_FORM = """
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body { font-family: sans-serif; padding: 20px; }
+input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
+.error { color: #b00020; margin-top: 10px; }
+.success { color: green; margin-top: 10px; }
+</style>
+</head>
+<body>
+<h2>Kegelfahren – Ergebniseingabe</h2>
+
+<form method="post" id="kegelForm">
+    <input
+        id="gespann_number"
+        name="gespann_number"
+        placeholder="Gespannnummer"
+        required
+        type="text"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        autocomplete="off"
+        value="{{ form_data.get('gespann_number', '') }}"
+    >
+
+    <input
+        id="time"
+        name="time"
+        placeholder="Zeit (z.B. 120.35 oder 120,35)"
+        type="text"
+        inputmode="decimal"
+        autocomplete="off"
+        value="{{ form_data.get('time', '') }}"
+    >
+
+    <input
+        id="faults"
+        name="faults"
+        placeholder="Fehler"
+        type="text"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        autocomplete="off"
+        value="{{ form_data.get('faults', '') }}"
+    >
+
+    <select id="status" name="status" required>
+        <option value="OK" {% if form_data.get('status', 'OK') == 'OK' %}selected{% endif %}>Normal</option>
+        <option value="RET" {% if form_data.get('status') == 'RET' %}selected{% endif %}>RET - aufgegeben</option>
+        <option value="ELI" {% if form_data.get('status') == 'ELI' %}selected{% endif %}>ELI - ausgeschieden</option>
+    </select>
+
+    <input
+        name="note"
+        placeholder="Bemerkung"
+        value="{{ form_data.get('note', '') }}"
+    >
+
+    <button type="submit">Senden</button>
+</form>
+
+{% if success %}
+<p class="success">✅ Gespeichert!</p>
+{% endif %}
+
+{% if error %}
+<p class="error">❌ {{ error }}</p>
+{% endif %}
+
+<script>
+function updateFieldRules() {
+    const status = document.getElementById("status").value;
+    const timeField = document.getElementById("time");
+    const faultsField = document.getElementById("faults");
+
+    if (status === "OK") {
+        timeField.required = true;
+        faultsField.required = true;
+        timeField.disabled = false;
+        faultsField.disabled = false;
+    } else {
+        timeField.required = false;
+        faultsField.required = false;
+        timeField.disabled = true;
+        faultsField.disabled = true;
+        timeField.value = "";
+        faultsField.value = "";
+    }
+}
+
+document.getElementById("status").addEventListener("change", updateFieldRules);
+window.addEventListener("load", updateFieldRules);
+</script>
+
+</body>
+</html>
+"""
+
+
+@app.route("/kegel/eingabe", methods=["GET", "POST"])
+def kegel_eingabe():
+    success = False
+    error = None
+    form_data = {
+        "gespann_number": "",
+        "time": "",
+        "faults": "",
+        "status": "OK",
+        "note": "",
+    }
+
+    if request.method == "POST":
+        form_data = {
+            "gespann_number": request.form.get("gespann_number", "").strip(),
+            "time": request.form.get("time", "").strip(),
+            "faults": request.form.get("faults", "").strip(),
+            "status": request.form.get("status", "OK").strip().upper(),
+            "note": request.form.get("note", "").strip(),
+        }
+
+        try:
+            gespann_number = int(form_data["gespann_number"])
+            status = form_data["status"]
+            note = form_data["note"]
+            time_raw = form_data["time"]
+            faults_raw = form_data["faults"]
+
+            if status not in ["OK", "RET", "ELI"]:
+                raise ValueError("Ungültiger Status")
+
+            if status == "OK":
+                if not time_raw:
+                    raise ValueError("Bei normalem Ergebnis muss eine Zeit eingegeben werden.")
+                if not faults_raw:
+                    raise ValueError("Bei normalem Ergebnis müssen Fehler eingegeben werden.")
+
+            time_value = float(time_raw.replace(",", ".")) if time_raw else None
+            faults = int(faults_raw) if faults_raw else None
+
+            with get_conn() as conn:
+                with conn.cursor() as c:
+                    c.execute("""
+                        INSERT INTO cones_results
+                        (gespann_number, time, faults, note, status, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        gespann_number,
+                        time_value,
+                        faults,
+                        note,
+                        status,
+                        datetime.now(BERLIN_TZ).replace(tzinfo=None)
+                    ))
+                conn.commit()
+
+            success = True
+            form_data = {
+                "gespann_number": "",
+                "time": "",
+                "faults": "",
+                "status": "OK",
+                "note": "",
+            }
+
+        except ValueError as e:
+            error = str(e) if str(e) else "Bitte gültige Werte eingeben."
+        except Exception as e:
+            if "unique_cones_gespann" in str(e):
+                error = "Für diese Gespannnummer wurde bereits ein Kegelergebnis eingetragen."
+            else:
+                error = f"Serverfehler: {e}"
+
+    return render_template_string(
+        HTML_KEGEL_FORM,
+        success=success,
+        error=error,
+        form_data=form_data
+    )
+
+
+@app.route("/api/kegel/results")
+def api_kegel_results():
+    auth = require_api_password()
+    if auth:
+        return auth
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id, gespann_number, time, faults, note, status, created_at, processed
+                FROM cones_results
+                WHERE processed = 0
+                ORDER BY id ASC
+            """)
+            rows = c.fetchall()
+
+    data = [
+        {
+            "id": row[0],
+            "gespann_number": row[1],
+            "time": row[2],
+            "faults": row[3],
+            "note": row[4],
+            "status": row[5],
+            "created_at": row[6].isoformat() if row[6] else None,
+            "processed": row[7],
+        }
+        for row in rows
+    ]
+
+    return jsonify(data)
+
+
+@app.route("/api/kegel/mark_processed", methods=["POST"])
+def api_kegel_mark_processed():
+    auth = require_api_password()
+    if auth:
+        return auth
+
+    ids = request.json.get("ids", [])
+
+    if not ids:
+        return {"status": "ok", "updated": 0}
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute(
+                "UPDATE cones_results SET processed = 1 WHERE id = ANY(%s)",
+                (ids,)
+            )
+        conn.commit()
+
+    return {"status": "ok", "updated": len(ids)}
+
+
+@app.route("/kegel/uebersicht")
+def kegel_uebersicht():
+    pw = request.args.get("pw", "").strip()
+    auth = require_master_password()
+    if auth:
+        return auth
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id, gespann_number, time, faults, note, status, created_at, processed
+                FROM cones_results
+                ORDER BY id DESC
+            """)
+            rows = c.fetchall()
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Kegel Übersicht</title>
+        <meta http-equiv="refresh" content="3">
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+            th { background: #f2f2f2; }
+            tr:nth-child(even) { background: #fafafa; }
+        </style>
+    </head>
+    <body>
+        <h2>Kegelfahren – Eingegangene Ergebnisse</h2>
+
+        <p>
+            <a href="/kegel/alle_loeschen?pw={{ pw }}" style="color: red; font-weight: bold;">
+                Alle Kegel-Einträge löschen
+            </a>
+        </p>
+
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Gespannnummer</th>
+                <th>Zeit</th>
+                <th>Fehler</th>
+                <th>Bemerkung</th>
+                <th>Status</th>
+                <th>Erstellt</th>
+                <th>Verarbeitet</th>
+                <th>Bearbeiten</th>
+                <th>Löschen</th>
+            </tr>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row[0] }}</td>
+                <td>{{ row[1] }}</td>
+                <td>{{ row[2] }}</td>
+                <td>{{ row[3] }}</td>
+                <td>{{ row[4] }}</td>
+                <td>{{ row[5] }}</td>
+                <td>{{ row[6] }}</td>
+                <td>{{ row[7] }}</td>
+                <td><a href="/kegel/bearbeiten/{{ row[0] }}?pw={{ pw }}">Bearbeiten</a></td>
+                <td><a href="/kegel/loeschen/{{ row[0] }}?pw={{ pw }}" style="color: red;">Löschen</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, rows=rows, pw=pw)
+
+
+@app.route("/kegel/bearbeiten/<int:result_id>", methods=["GET", "POST"])
+def kegel_bearbeiten(result_id):
+    auth = require_master_password()
+    if auth:
+        return auth
+
+    error = None
+    success = False
+    pw = request.args.get("pw", "").strip()
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            if request.method == "POST":
+                try:
+                    gespann_number = int(request.form["gespann_number"].strip())
+                    status = request.form["status"].strip().upper()
+                    note = request.form.get("note", "").strip()
+                    time_raw = request.form.get("time", "").strip()
+                    faults_raw = request.form.get("faults", "").strip()
+
+                    if status not in ["OK", "RET", "ELI"]:
+                        raise ValueError("Ungültiger Status")
+
+                    if status == "OK":
+                        if not time_raw:
+                            raise ValueError("Bei normalem Ergebnis muss eine Zeit eingegeben werden.")
+                        if not faults_raw:
+                            raise ValueError("Bei normalem Ergebnis müssen Fehler eingegeben werden.")
+
+                    time_value = float(time_raw.replace(",", ".")) if time_raw else None
+                    faults = int(faults_raw) if faults_raw else None
+
+                    c.execute("""
+                        UPDATE cones_results
+                        SET gespann_number = %s,
+                            time = %s,
+                            faults = %s,
+                            note = %s,
+                            status = %s,
+                            processed = 0
+                        WHERE id = %s
+                    """, (
+                        gespann_number,
+                        time_value,
+                        faults,
+                        note,
+                        status,
+                        result_id
+                    ))
+                    conn.commit()
+                    success = True
+
+                except ValueError as e:
+                    error = str(e) if str(e) else "Bitte gültige Werte eingeben."
+                except Exception as e:
+                    if "unique_cones_gespann" in str(e):
+                        error = "Für diese Gespannnummer gibt es bereits ein Kegelergebnis."
+                    else:
+                        error = f"Serverfehler: {e}"
+
+            c.execute("""
+                SELECT id, gespann_number, time, faults, note, status, created_at, processed
+                FROM cones_results
+                WHERE id = %s
+            """, (result_id,))
+            row = c.fetchone()
+
+    if not row:
+        return "Eintrag nicht gefunden", 404
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Kegel Eintrag bearbeiten</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            input, select, button { font-size: 20px; margin: 10px 0; width: 100%; padding: 10px; box-sizing: border-box; }
+            .error { color: #b00020; }
+            .success { color: green; }
+        </style>
+    </head>
+    <body>
+        <h2>Kegel-Eintrag bearbeiten</h2>
+
+        <form method="post">
+            <input name="gespann_number" value="{{ row[1] }}" required type="text" inputmode="numeric" pattern="[0-9]*">
+            <input name="time" value="{{ '' if row[2] is none else row[2] }}" type="text" inputmode="decimal">
+            <input name="faults" value="{{ '' if row[3] is none else row[3] }}" type="text" inputmode="numeric" pattern="[0-9]*">
+
+            <select name="status" required>
+                <option value="OK" {% if row[5] == 'OK' %}selected{% endif %}>Normal</option>
+                <option value="RET" {% if row[5] == 'RET' %}selected{% endif %}>RET - aufgegeben</option>
+                <option value="ELI" {% if row[5] == 'ELI' %}selected{% endif %}>ELI - ausgeschieden</option>
+            </select>
+
+            <input name="note" value="{{ row[4] }}" placeholder="Bemerkung">
+
+            <button type="submit">Änderungen speichern</button>
+        </form>
+
+        {% if success %}
+        <p class="success">✅ Änderungen gespeichert</p>
+        {% endif %}
+
+        {% if error %}
+        <p class="error">❌ {{ error }}</p>
+        {% endif %}
+
+        <a href="/kegel/uebersicht?pw={{ pw }}">Zurück zur Übersicht</a>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, row=row, success=success, error=error, pw=pw)
+
+
+@app.route("/kegel/loeschen/<int:result_id>", methods=["GET", "POST"])
+def kegel_loeschen(result_id):
+    auth = require_master_password()
+    if auth:
+        return auth
+
+    error = None
+    pw = request.args.get("pw", "").strip()
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT id, gespann_number, time, faults, note, status, created_at, processed
+                FROM cones_results
+                WHERE id = %s
+            """, (result_id,))
+            row = c.fetchone()
+
+            if not row:
+                return "Eintrag nicht gefunden", 404
+
+            if request.method == "POST":
+                confirm = request.form.get("confirm")
+
+                if confirm != "yes":
+                    error = "Bitte bestätige das Löschen mit dem Haken."
+                else:
+                    c.execute("DELETE FROM cones_results WHERE id = %s", (result_id,))
+                    conn.commit()
+                    return f"""
+                    <html>
+                    <body style="font-family: sans-serif; padding: 20px;">
+                        <h2>Kegel-Eintrag gelöscht</h2>
+                        <a href="/kegel/uebersicht?pw={pw}">Zurück zur Übersicht</a>
+                    </body>
+                    </html>
+                    """
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Kegel Eintrag löschen</title>
+    </head>
+    <body style="font-family: sans-serif; padding: 20px;">
+        <h2>Kegel-Eintrag löschen</h2>
+
+        <p><strong>Gespann:</strong> {{ row[1] }}</p>
+        <p><strong>Zeit:</strong> {{ row[2] }}</p>
+        <p><strong>Fehler:</strong> {{ row[3] }}</p>
+        <p><strong>Status:</strong> {{ row[5] }}</p>
+
+        <form method="post">
+            <label>
+                <input type="checkbox" name="confirm" value="yes">
+                Ja, ich möchte diesen Eintrag wirklich löschen
+            </label>
+            <br><br>
+            <button type="submit">Eintrag endgültig löschen</button>
+        </form>
+
+        {% if error %}
+        <p style="color:#b00020;">❌ {{ error }}</p>
+        {% endif %}
+
+        <p><a href="/kegel/uebersicht?pw={{ pw }}">Abbrechen und zurück</a></p>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, row=row, error=error, pw=pw)
+
+
+@app.route("/kegel/alle_loeschen", methods=["GET", "POST"])
+def kegel_alle_loeschen():
+    auth = require_master_password()
+    if auth:
+        return auth
+
+    error = None
+    pw = request.args.get("pw", "").strip()
+
+    with get_conn() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT COUNT(*) FROM cones_results")
+            count = c.fetchone()[0]
+
+            if request.method == "POST":
+                confirm = request.form.get("confirm")
+
+                if confirm != "yes":
+                    error = "Bitte bestätige das Löschen aller Kegel-Einträge mit dem Haken."
+                else:
+                    c.execute("DELETE FROM cones_results")
+                    conn.commit()
+                    return f"""
+                    <html>
+                    <body style="font-family: sans-serif; padding: 20px;">
+                        <h2>Alle Kegel-Einträge gelöscht</h2>
+                        <a href="/kegel/uebersicht?pw={pw}">Zurück zur Übersicht</a>
+                    </body>
+                    </html>
+                    """
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Alle Kegel-Einträge löschen</title>
+    </head>
+    <body style="font-family: sans-serif; padding: 20px;">
+        <h2>Alle Kegel-Einträge löschen</h2>
+
+        <p style="color:red; font-weight:bold;">Achtung: Du bist dabei, alle Kegel-Einträge zu löschen.</p>
+        <p>Aktuell gespeicherte Einträge: <strong>{{ count }}</strong></p>
+
+        <form method="post">
+            <label>
+                <input type="checkbox" name="confirm" value="yes">
+                Ja, ich möchte wirklich alle Kegel-Einträge löschen
+            </label>
+            <br><br>
+            <button type="submit">Alle Kegel-Einträge endgültig löschen</button>
+        </form>
+
+        {% if error %}
+        <p style="color:#b00020;">❌ {{ error }}</p>
+        {% endif %}
+
+        <p><a href="/kegel/uebersicht?pw={{ pw }}">Abbrechen und zurück</a></p>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, count=count, error=error, pw=pw)
 
 if __name__ == "__main__":
     app.run(debug=True)
