@@ -21,6 +21,8 @@ if not MASTER_PASSWORD:
     raise RuntimeError("MASTER_PASSWORD ist nicht gesetzt")
 
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
+def now_berlin_naive():
+    return datetime.now(BERLIN_TZ).replace(tzinfo=None)
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL ist nicht gesetzt")
@@ -299,7 +301,7 @@ def eingabe(obstacle):
     }
 
     token = request.args.get("token", "").strip()
-    now = datetime.now(BERLIN_TZ).replace(tzinfo=None)
+    now = now_berlin_naive()
 
     with get_conn() as conn:
         with conn.cursor() as c:
@@ -371,7 +373,7 @@ def eingabe(obstacle):
                         faults,
                         note,
                         status,
-                        datetime.utcnow()
+                        now_berlin_naive()
                     ))
                 conn.commit()
 
@@ -853,7 +855,7 @@ def token_set_erstellen():
                             valid_from,
                             valid_until,
                             True,
-                            datetime.now(BERLIN_TZ).replace(tzinfo=None)
+                            now_berlin_naive()
                         ))
 
                         base_url = request.host_url.rstrip("/")
@@ -978,7 +980,7 @@ def tokens_anzeigen():
     if pw != MASTER_PASSWORD:
         return "❌ Kein Zugriff", 403
 
-    now = datetime.now(BERLIN_TZ).replace(tzinfo=None)
+    now = now_berlin_naive()
 
     with get_conn() as conn:
         with conn.cursor() as c:
@@ -1203,7 +1205,7 @@ def kegel_eingabe():
                         faults,
                         note,
                         status,
-                        datetime.now(BERLIN_TZ).replace(tzinfo=None)
+                        now_berlin_naive()
                     ))
                 conn.commit()
 
